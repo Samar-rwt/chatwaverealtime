@@ -300,7 +300,8 @@ function ChatPage() {
               <div className="mx-auto flex max-w-3xl flex-col gap-1.5">
                 {thread.map((m, i) => {
                   const mine = m.sender_id === me;
-                  const showDay = i === 0 || dayLabel(thread[i - 1].created_at) !== dayLabel(m.created_at);
+                  const prev = thread[i - 1];
+                  const showDay = !prev || dayLabel(prev.created_at) !== dayLabel(m.created_at);
                   return (
                     <div key={m.id} className="flex flex-col">
                       {showDay && (
