@@ -64,19 +64,19 @@ function ChatPage() {
   const addMessage = (m: Message) =>
     setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
 
-  // Initial load
+  // Initial load: People come from conversation records, not the global user list
   useEffect(() => {
     let active = true;
     (async () => {
-      const [p, m] = await Promise.all([
-        supabase.from("profiles").select("*").order("display_name"),
-        supabase
-          .from("messages")
-          .select("*")
-          .or(`sender_id.eq.${me},recipient_id.eq.${me}`)
-          .order("created_at", { ascending: true })
-          .limit(1000),
-      ]);
+      const m = await supabase
+        .from("messages")
+        .select("*")
+        .or(`sender_id.eq.${me},recipient_id.eq.${me}`)
+        .order("created_at", { ascending: true })
+        .limit(1000);
+      const ids = new Set<string>([me]);
+      for (const x of m.data ?? []) ids.add(x.sender_id === me ? x.recipient_id : x.sender_id);
+      const p = await supabase.from("profiles").select("*").in("id", [...ids]);
       if (!active) return;
       if (p.error || m.error) toast.error("Couldn't load your chats");
       setProfiles(p.data ?? []);
@@ -87,6 +87,27 @@ function ChatPage() {
       active = false;
     };
   }, [me]);
+
+  const [finding, setFinding] = useState(false);
+  async function startByEmail() {
+    const email = search.trim();
+    if (!email.includes("@") || finding) return;
+    setFinding(true);
+    const { data, error } = await supabase.rpc("find_profile_by_email", { _email: email });
+    setFinding(false);
+    const found = data?.[0];
+    if (error || !found) {
+      toast.error("No ChatWave user with that email.");
+      return;
+    }
+    setProfiles((cur) =>
+      cur.some((c) => c.id === found.id)
+        ? cur
+        : [...cur, { id: found.id, display_name: found.display_name, email, last_seen: new Date(0).toISOString(), created_at: "" }],
+    );
+    setSelectedId(found.id);
+    setSearch("");
+  }
 
   // Realtime messages + new users
   useEffect(() => {
@@ -229,18 +250,28 @@ function ChatPage() {
         <div className="relative mx-4 my-3">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search people"
+            placeholder="Search chats or enter an email"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") startByEmail();
+            }}
             className="rounded-full border-transparent bg-secondary pl-9"
           />
         </div>
+        {search.includes("@") && (
+          <div className="mx-4 mb-2">
+            <Button size="sm" className="w-full rounded-full" onClick={startByEmail} disabled={finding}>
+              {finding ? "Looking up…" : `Start chat with ${search.trim()}`}
+            </Button>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto px-2 pb-4">
           {loading ? (
             <p className="p-6 text-center text-sm text-muted-foreground">Loading chats…</p>
           ) : conversations.length === 0 ? (
             <p className="p-6 text-center text-sm text-muted-foreground">
-              {search ? "No one matches your search." : "No other users yet. Invite a friend to sign up!"}
+              {search ? "No chats match your search." : "No conversations yet. Enter a friend's email above to start one."}
             </p>
           ) : (
             conversations.map(({ profile, last }) => (
