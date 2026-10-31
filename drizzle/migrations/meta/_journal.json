@@ -15,6 +15,13 @@
       "when": 1793467301465,
       "tag": "0001_restrict_profile_visibility",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793468741612,
+      "tag": "0002_premium_messaging_and_private_ai",
+      "breakpoints": true
     }
   ]
 }
