@@ -15,7 +15,7 @@ type Message = Tables<"messages">;
 export const Route = createFileRoute("/_authenticated/chat")({
   head: () => ({
     meta: [
-      { title: "Chats — ChatWave" },
+      { title: "ChatWave" },
       { name: "description", content: "Your ChatWave conversations." },
       { property: "og:title", content: "Chats — ChatWave" },
       { property: "og:description", content: "Your ChatWave conversations." },

@@ -8,7 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "ChatWave — Simple real-time messaging" },
+      { title: "ChatWave" },
       { name: "description", content: "Chat one-to-one in real time with ChatWave. Fast, clean and private." },
       { property: "og:title", content: "ChatWave — Simple real-time messaging" },
       { property: "og:description", content: "Chat one-to-one in real time with ChatWave. Fast, clean and private." },
