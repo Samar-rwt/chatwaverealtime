@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowLeft, LogOut, MessageCircle, Search, SendHorizontal } from "lucide-react";
+import { Check, CheckCheck, ArrowLeft, LogOut, MessageCircle, Search, SendHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,6 +60,14 @@ function ChatPage() {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [typing, setTyping] = useState<Record<string, number>>({});
+  const [now, setNow] = useState(Date.now());
+  const lastTypingSent = useRef(0);
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const isTyping = (id: string) => (typing[id] ?? 0) > now - 5000;
 
   const addMessage = (m: Message) =>
     setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
@@ -128,11 +136,35 @@ function ChatPage() {
           }
         }
       })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "messages" }, (payload) => {
+        const m = payload.new as Message;
+        setMessages((prev) => prev.map((x) => (x.id === m.id ? { ...x, ...m } : x)));
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "chat_activity", filter: `recipient_id=eq.${me}` }, (payload) => {
+        const a = payload.new as { user_id?: string; typing_at?: string | null };
+        if (!a?.user_id) return;
+        setTyping((t) => ({ ...t, [a.user_id!]: a.typing_at ? new Date(a.typing_at).getTime() : 0 }));
+      })
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
   }, [me]);
+
+  function sendActivity(typingNow: boolean) {
+    if (!selectedId) return;
+    supabase
+      .from("chat_activity")
+      .upsert({ user_id: me, recipient_id: selectedId, typing_at: typingNow ? new Date().toISOString() : null, seen_at: new Date().toISOString() })
+      .then(() => {});
+  }
+  function onDraftChange(v: string) {
+    setDraft(v);
+    if (v && Date.now() - lastTypingSent.current > 2500) {
+      lastTypingSent.current = Date.now();
+      sendActivity(true);
+    }
+  }
 
   // Presence (online status)
   useEffect(() => {
@@ -188,6 +220,16 @@ function ChatPage() {
     [messages, selectedId, me],
   );
 
+  // Read receipts: mark incoming messages in the open chat as read
+  useEffect(() => {
+    if (!selectedId || typeof document === "undefined" || document.hidden) return;
+    const unread = thread.filter((m) => m.sender_id === selectedId && !m.read_at);
+    if (!unread.length) return;
+    const at = new Date().toISOString();
+    setMessages((prev) => prev.map((m) => (unread.some((u) => u.id === m.id) ? { ...m, read_at: at } : m)));
+    for (const m of unread) supabase.rpc("message_action", { _id: m.id, _action: "read" }).then(() => {});
+  }, [thread, selectedId]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [thread.length, selectedId]);
@@ -197,6 +239,8 @@ function ChatPage() {
     if (!content || !selectedId || sending) return;
     setSending(true);
     setDraft("");
+    lastTypingSent.current = 0;
+    sendActivity(false);
     const { data, error } = await supabase
       .from("messages")
       .insert({ sender_id: me, recipient_id: selectedId, content })
@@ -288,8 +332,8 @@ function ChatPage() {
                     <span className="truncate font-semibold text-foreground">{profile.display_name}</span>
                     {last && <span className="shrink-0 text-xs text-muted-foreground">{formatTime(last.created_at)}</span>}
                   </div>
-                  <div className="truncate text-sm text-muted-foreground">
-                    {last ? `${last.sender_id === me ? "You: " : ""}${last.content}` : "Start a conversation"}
+                  <div className={`truncate text-sm ${isTyping(profile.id) ? "font-medium text-primary" : "text-muted-foreground"}`}>
+                    {isTyping(profile.id) ? "typing…" : last ? `${last.sender_id === me ? "You: " : ""}${last.content}` : "Start a conversation"}
                   </div>
                 </div>
               </button>
@@ -318,7 +362,7 @@ function ChatPage() {
               <div className="min-w-0">
                 <div className="truncate font-bold text-foreground">{selected.display_name}</div>
                 <div className={`text-xs ${online.has(selected.id) ? "font-medium text-primary" : "text-muted-foreground"}`}>
-                  {lastSeenText(selected)}
+                  {isTyping(selected.id) ? "typing…" : lastSeenText(selected)}
                 </div>
               </div>
             </header>
@@ -348,13 +392,26 @@ function ChatPage() {
                         }`}
                       >
                         <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">{m.content}</p>
-                        <div className={`mt-0.5 text-right text-[11px] ${mine ? "opacity-80" : "text-muted-foreground"}`}>
+                        <div className={`mt-0.5 flex items-center justify-end gap-1 text-[11px] ${mine ? "opacity-80" : "text-muted-foreground"}`}>
                           {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          {mine &&
+                            (m.read_at ? (
+                              <CheckCheck className="h-3.5 w-3.5 text-accent-foreground" aria-label="Read" />
+                            ) : (
+                              <Check className="h-3.5 w-3.5" aria-label="Sent" />
+                            ))}
                         </div>
                       </div>
                     </div>
                   );
                 })}
+                {isTyping(selected.id) && (
+                  <div className="flex gap-1 self-start rounded-2xl rounded-bl-md bg-bubble-in px-4 py-3 shadow-soft" aria-label="typing">
+                    {[0, 1, 2].map((d) => (
+                      <span key={d} className="animate-typing h-2 w-2 rounded-full bg-muted-foreground" style={{ animationDelay: `${d * 0.15}s` }} />
+                    ))}
+                  </div>
+                )}
                 <div ref={bottomRef} />
               </div>
             </div>
@@ -367,7 +424,7 @@ function ChatPage() {
             >
               <textarea
                 value={draft}
-                onChange={(e) => setDraft(e.target.value)}
+                onChange={(e) => onDraftChange(e.target.value)}
                 onKeyDown={onKey}
                 rows={1}
                 maxLength={4000}
